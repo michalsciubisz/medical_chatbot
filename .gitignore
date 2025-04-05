@@ -1,0 +1,13 @@
+# Ignore Python virtual environment
+venv/
+
+# Ignore Node.js dependencies
+frontend/node_modules/
+
+# Ignore environment files
+.env
+
+# Ignore too much data in data
+data/images/auto_test
+data/images/test
+data/images/train
