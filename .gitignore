@@ -11,3 +11,7 @@ frontend/node_modules/
 data/images/auto_test
 data/images/test
 data/images/train
+
+# Ignore excesive models
+
+notebooks/models
