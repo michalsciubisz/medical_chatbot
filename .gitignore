@@ -15,3 +15,5 @@ data/images/train
 # Ignore excesive models
 
 notebooks/models
+notebooks/training
+notebooks/datasets_augmented
