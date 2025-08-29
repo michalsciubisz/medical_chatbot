@@ -1,14 +1,40 @@
 from flask import Blueprint, request, jsonify
+from config.constant import QUESTIONS, IMAGE_MAPPER, MIN_ANSWERS
 from utils.womac import calculate_womac
 from utils.image_model import predict_image_classification, adjust_image
-from config.constant import QUESTIONS, IMAGE_MAPPER
-
-import uuid
-import numpy as np
+import uuid, numpy as np
 
 chatbot_bp = Blueprint("chatbot", __name__)
+user_sessions = {}
 
-user_sessions = {}  #stored temporary in variable
+def validate_answer(qdef, answer):
+    t = qdef["type"]
+    if t == "number":
+        try:
+            val = float(answer)
+        except:
+            return False, "Please enter a valid number."
+        if "min" in qdef and val < qdef["min"]:
+            return False, f"Value must be ≥ {qdef['min']}."
+        if "max" in qdef and val > qdef["max"]:
+            return False, f"Value must be ≤ {qdef['max']}."
+        return True, val
+    elif t == "choice":
+        if answer not in qdef["choices"]:
+            return False, f"Choose one of: {', '.join(qdef['choices'])}."
+        return True, answer
+    elif t == "scale":
+        try:
+            val = int(answer)
+        except:
+            return False, "Please choose a value on the scale."
+        lo, hi = qdef.get("min", 0), qdef.get("max", 4)
+        if val < lo or val > hi:
+            return False, f"Value must be between {lo} and {hi}."
+        return True, val
+    else:
+        # fallback na tekst
+        return True, answer
 
 @chatbot_bp.route("/api/start", methods=["POST"])
 def start_conversation():
@@ -16,54 +42,73 @@ def start_conversation():
     user_sessions[session_id] = {
         "responses": {},
         "current_question_index": 0,
-        "mode": None  # will be either text or image
+        "mode": None
     }
-    return jsonify({"session_id": session_id, "question": "Hello! Please choose type of classification you want to take! \n Please type 'image' or 'text' to choose classification type."})
+    return jsonify({
+        "session_id": session_id,
+        "question": "Hello! Please choose type of assessment: type 'image' or 'text'."
+    })
 
 @chatbot_bp.route("/api/respond", methods=["POST"])
 def respond():
-    data = request.json
-    session_id = data["session_id"]
-    answer = data.get("answer", "").strip()
+    data = request.json or {}
+    session_id = data.get("session_id")
+    answer = (data.get("answer") or "").strip()
 
-    if not answer:
-        answer = "0"
+    if not session_id or session_id not in user_sessions:
+        return jsonify({"error":"Invalid or expired session."}), 400
 
-    user_data = user_sessions.get(session_id)
+    s = user_sessions[session_id]
+    womac = QUESTIONS["womac"]
+    idx = s["current_question_index"]
 
-    womac_questions = QUESTIONS["womac"]
-    current_index = user_data["current_question_index"]
-
-    # handling first time user entry
-    if current_index == 0 and user_data["mode"] is None:
+    # wybór trybu
+    if idx == 0 and s["mode"] is None:
         if answer.lower() == "image":
-            user_data["mode"] = "image"
-            return jsonify({"question": "Please upload an image now."})
+            s["mode"] = "image"
+            return jsonify({"question":"Please upload an image now.", "mode":"image"})
         elif answer.lower() == "text":
-            user_data["mode"] = "text"
-            user_data["current_question_index"] += 1
-            return jsonify({"question": womac_questions[0]})
+            s["mode"] = "text"
+            # nie pobieramy odpowiedzi, odpalamy 1. pytanie
+            q = womac[0]
+            s["current_question_index"] = 1
+            return jsonify({"question": q["text"], "question_id": q["id"], "type": q["type"], "meta": {k:q[k] for k in ("min","max","choices","labels") if k in q}})
         else:
-            return jsonify({"question": "Please type 'image' or 'text' to choose classification type."})
+            return jsonify({"question":"Please type 'image' or 'text' to choose classification type."})
 
-    if user_data["mode"] == 'text':
-        # saving previous answer
-        if current_index - 1 < len(womac_questions):
-            previous_question = womac_questions[current_index - 1]
-            user_data["responses"][previous_question] = answer
+    if s["mode"] != "text":
+        return jsonify({"error":"Text flow not active."}), 400
 
-        # checking if there sth more
-        if current_index < len(womac_questions):
-            next_question = womac_questions[current_index]
-            user_data["current_question_index"] += 1
-            return jsonify({"question": next_question})
-        else:
-            print(user_data['responses'])
-            result = calculate_womac(user_data["responses"])
+    # zapis i walidacja odpowiedzi do poprzedniego pytania
+    prev_idx = idx - 1
+    if prev_idx >= 0 and prev_idx < len(womac):
+        prev_q = womac[prev_idx]
+        ok, val_or_msg = validate_answer(prev_q, answer if answer != "" else "0")
+        if not ok:
+            # zwróć ten sam prompt + komunikat
             return jsonify({
-                "result": result,
-                "message": "Thank you for completing the questionnaire."
-            })
+                "error":"validation_error",
+                "message": val_or_msg,
+                "question": prev_q["text"],
+                "question_id": prev_q["id"],
+                "type": prev_q["type"],
+                "meta": {k:prev_q[k] for k in ("min","max","choices","labels") if k in prev_q}
+            }), 400
+        s["responses"][prev_q["id"]] = val_or_msg
+
+    # kolejne pytanie lub wynik
+    if idx < len(womac):
+        q = womac[idx]
+        s["current_question_index"] += 1
+        return jsonify({
+            "question": q["text"],
+            "question_id": q["id"],
+            "type": q["type"],
+            "meta": {k:q[k] for k in ("min","max","choices","labels") if k in q}
+        })
+    else:
+        result = calculate_womac(s["responses"])
+        return jsonify({"result": result, "message":"Thank you for completing the questionnaire."})
 
 @chatbot_bp.route("/api/classify_image", methods=["POST"])
 def classify_image():
@@ -75,34 +120,31 @@ def classify_image():
 
 @chatbot_bp.route("/api/early_finish", methods=["POST"])
 def early_finish():
-    data = request.json
-    session_id = data["session_id"]
-    user_data = user_sessions.get(session_id)
-    if not user_data:
-        return jsonify({"error": "Invalid session"}), 400
-    
-    if user_data["mode"] == "text":
+    data = request.json or {}
+    session_id = data.get("session_id")
+    s = user_sessions.get(session_id)
+    if not s: return jsonify({"error":"Invalid session"}), 400
+    if s["mode"] != "text":
+        return jsonify({"result":"Image analysis complete","message":"Thank you for your submission."})
 
-        responses = user_data["responses"]
-        
-        womac_questions = QUESTIONS["womac"][4:]  
-        for question in womac_questions:
-            if question not in responses:
-                responses[question] = "0" 
-        
-        result = calculate_womac(responses)
+    answered = len(s["responses"])
+    if answered < MIN_ANSWERS:
         return jsonify({
-            "result": f"Early assessment complete: {result}",
-            "assessment": result,
-            "is_partial": True,
-            "message": "Note: Some answers were set to neutral (0) for calculation."
+            "result": None,
+            "message": f"You've answered only {answered} questions. Continue or finish with low confidence?",
+            "low_confidence": True
         })
-    
-    elif user_data["mode"] == "image":
-        # Handle image case
-        return jsonify({
-            "result": "Image analysis complete",
-            "message": "Thank you for your submission."
-        })
-    
-    return jsonify({"error": "No assessment mode selected"}), 400
+
+    # uzupełnij brakujące skale zerami tylko dla pytań typu "scale"
+    womac = QUESTIONS["womac"]
+    for q in womac:
+        if q["type"] == "scale" and q["id"] not in s["responses"]:
+            s["responses"][q["id"]] = 0
+
+    result = calculate_womac(s["responses"])
+    return jsonify({
+        "result": f"Early assessment complete: {result}",
+        "assessment": result,
+        "is_partial": True,
+        "message": "Note: Missing scale answers were set to 0 for calculation."
+    })
