@@ -266,13 +266,10 @@
 .next-steps { padding-left: 20px; }
 .resources ul { margin: 6px 0 0 18px; }
 
-.risk-badge {
-  display: inline-block; padding: 6px 10px; border-radius: 999px; font-weight: 700;
-  background: #FFFDE7; border: 1px solid #F9E79F;
-}
-.risk-low { background: #E8F5E9; }
-.risk-moderate { background: #FFFDE7; }
-.risk-high { background: #FFEBEE; }
+.risk-badge { padding: 6px 10px; border-radius: 6px; font-weight: 600; display: inline-block; }
+.risk-low { background: #e6f7ec; border: 1px solid #8fd1a6; }
+.risk-moderate { background: #fff6e5; border: 1px solid #f0c36d; }
+.risk-high { background: #ffe9e9; border: 1px solid #f38b8b; }
 
 .confidence { margin-top: 6px; font-weight: 600; }
 

@@ -18,6 +18,8 @@ function Chatbot() {
   const [currentQ, setCurrentQ] = useState(null);
   const [askedCount, setAskedCount] = useState(0);
   const [useSlider, setUseSlider] = useState(false); // default OFF for a more "chatty" feel
+  const [textRisk, setTextRisk] = useState(null); // 'low' | 'moderate' | 'high' | null
+
 
   const messagesEndRef = useRef(null);
 
@@ -135,6 +137,36 @@ function Chatbot() {
     very: ["very", "really"],
     extremely: ["extremely", "hugely", "tremendously", "incredibly"]
   };
+
+  // ...
+
+function normalizeRisk(val) {
+  if (!val) return null;
+  const t = String(val).toLowerCase();
+  if (t.includes("high")) return "high";
+  if (t.includes("moderate") || t.includes("medium")) return "moderate";
+  if (t.includes("low")) return "low";
+  return null;
+}
+
+function riskFromHeuristic(p) {
+  // p ∈ [0,1]
+  if (p >= 0.75) return "high";
+  if (p >= 0.45) return "moderate";
+  return "low";
+}
+
+function riskLabel(r) {
+  if (r === "high") return "High OA likelihood";
+  if (r === "moderate") return "Moderate OA likelihood";
+  if (r === "low") return "Low OA likelihood";
+  return "—";
+}
+
+function riskClass(r) {
+  return r ? `risk-badge risk-${r}` : "risk-badge";
+}
+
 
   function normalize(str) {
     return str.toLowerCase().replace(/\s+/g, " ").trim();
@@ -415,6 +447,15 @@ function Chatbot() {
       const res = await axios.post("http://localhost:5000/api/respond", payload);
       const data = res.data;
 
+      if (data.text_risk) {
+        setTextRisk(normalizeRisk(data.text_risk) || null);
+      }
+      
+      if (!data.mode && data.result && typeof data.result === "string") {
+        const inferred = normalizeRisk(data.result);
+        if (inferred) setTextRisk(inferred);
+      }
+
       if (data.mode === "image") setImageModeActive(true);
 
       if (currentQ?.question_id) {
@@ -519,6 +560,13 @@ function Chatbot() {
         session_id: sessionId,
       });
       const data = res.data;
+
+      if (data.text_risk) {
+        setTextRisk(normalizeRisk(data.text_risk) || null);
+      } else if (data.result && typeof data.result === "string") {
+        const inferred = normalizeRisk(data.result);
+        if (inferred) setTextRisk(inferred);
+      }
 
       if (data.result) {
         setMessages((prev) => [
@@ -817,9 +865,22 @@ function Chatbot() {
         <div className="results-section">
           <h2>Summary of results</h2>
           <div className="results-grid">
-            <section className="card">
+            {/* <section className="card">
               <h3>Overall result</h3>
               <div className="risk-badge risk-moderate">Moderate OA likelihood</div>
+              <p className="confidence">Confidence (heuristic): {(heurConfidence() * 100).toFixed(0)}%</p>
+            </section> */}
+            <section className="card">
+              <h3>Overall result</h3>
+              {(() => {
+                const fallback = riskFromHeuristic(heurConfidence());
+                const r = textRisk || fallback;
+                return (
+                  <div className={riskClass(r)}>
+                    {riskLabel(r)}
+                  </div>
+                );
+              })()}
               <p className="confidence">Confidence (heuristic): {(heurConfidence() * 100).toFixed(0)}%</p>
             </section>
 
