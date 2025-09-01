@@ -17,3 +17,8 @@ data/images/train
 notebooks/models
 notebooks/training
 notebooks/datasets_augmented
+
+/backend/config/__pycache__
+/backend/routes/__pycache__
+/backend/utils/__pycache__
+

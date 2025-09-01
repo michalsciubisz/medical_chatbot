@@ -72,6 +72,7 @@ MIN_ANSWERS = 10
 
 QUESTIONS = {
     "womac": [
+        {"id":"sex","text":"What is your sex?","type":"choice","choices":["male","female"]},
         {"id":"age","text":"How old are you?","type":"number","min":18,"max":110},
         {"id":"height_cm","text":"What's your height? [cm]","type":"number","min":120,"max":230},
         {"id":"weight_kg","text":"What's your weight? [kg]","type":"number","min":30,"max":300},

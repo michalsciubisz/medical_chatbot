@@ -19,6 +19,7 @@ function Chatbot() {
   const [askedCount, setAskedCount] = useState(0);
   const [useSlider, setUseSlider] = useState(false); // default OFF for a more "chatty" feel
   const [textRisk, setTextRisk] = useState(null); // 'low' | 'moderate' | 'high' | null
+  const [finalCard, setFinalCard] = useState(null);
 
 
   const messagesEndRef = useRef(null);
@@ -418,7 +419,46 @@ function riskClass(r) {
     );
   };
 
+  const ResultCardBubble = ({ card }) => {
+    if (!card) return null;
+    const { grade_label, grade_title, womac, tips, color } = card;
+    return (
+      <div className="result-bubble" style={{ borderLeft: `6px solid ${color||'#666'}`, padding: 12 }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>{grade_label}</div>
+        {grade_title && <div style={{ opacity: 0.8, marginBottom: 6 }}>{grade_title}</div>}
+        {womac?.percent != null && (
+          <div style={{ margin: '6px 0 10px' }}>
+            WOMAC: <b>{Math.round(womac.percent)}%</b>
+            <div className="progress" style={{ height: 6, background: '#eee', borderRadius: 3, marginTop: 4 }}>
+              <div style={{
+                width: `${Math.min(100, Math.max(0, womac.percent))}%`,
+                height: '100%', background: color || '#666', borderRadius: 3
+              }} />
+            </div>
+          </div>
+        )}
+        {Array.isArray(tips) && tips.length > 0 && (
+          <ul style={{ paddingLeft: 18, margin: 0 }}>
+            {tips.slice(0,3).map((t, i) => <li key={i}>{t}</li>)}
+          </ul>
+        )}
+      </div>
+    );
+  };
+
+  // const renderQuestion = (m) => {
+  //   if (m.sender === "bot" && m.question) {
+  //     if (m.type === "scale") return <ScaleQuestion m={m} />;
+  //     if (m.type === "choice") return <ChoiceQuestion m={m} />;
+  //     return <FreeTextQuestion m={m} />;
+  //   }
+  //   return <p>{m.text}</p>;
+  // };
+
   const renderQuestion = (m) => {
+    if (m.type === "result-card" && m.card) {
+      return <ResultCardBubble card={m.card} />;
+    }
     if (m.sender === "bot" && m.question) {
       if (m.type === "scale") return <ScaleQuestion m={m} />;
       if (m.type === "choice") return <ChoiceQuestion m={m} />;
@@ -470,10 +510,32 @@ function riskClass(r) {
         });
       }
 
+      // if (data.result) {
+      //   setMessages((prev) => [...prev, { text: data.result, sender: "bot" }]);
+      //   setIsExamComplete(true);
+      //   setIsTyping(false);
+      //   return;
+      // }
       if (data.result) {
-        setMessages((prev) => [...prev, { text: data.result, sender: "bot" }]);
+        const newMsgs = [{ text: data.result, sender: "bot" }];
+        if (data.message) {
+          newMsgs.push({ text: data.message, sender: "bot" });
+        }
+        if (data.card) {
+          newMsgs.push({ sender: "bot", type: "result-card", card: data.card });
+        }
+        if (data.card) setFinalCard(data.card);
+        setMessages((prev) => [...prev, ...newMsgs]);
+
+        // jeśli backend poda “card”, zaktualizuj też “Results” tab i ryzyko
+        if (data.card?.risk_label) {
+          setTextRisk(normalizeRisk(data.card.risk_label) || null);
+        }
         setIsExamComplete(true);
         setIsTyping(false);
+
+        // opcjonalnie automatycznie pokaż zakładkę "Results"
+        // setActiveTab("results");
         return;
       }
 
@@ -565,6 +627,7 @@ function riskClass(r) {
       });
       const data = res.data;
 
+      // 1) ryzyko (z pola text_risk albo z result-stringa)
       if (data.text_risk) {
         setTextRisk(normalizeRisk(data.text_risk) || null);
       } else if (data.result && typeof data.result === "string") {
@@ -572,16 +635,31 @@ function riskClass(r) {
         if (inferred) setTextRisk(inferred);
       }
 
+      // 2) jeśli mamy wynik – pokaż result, message i ew. card w czacie
       if (data.result) {
-        setMessages((prev) => [
-          ...prev,
+        const newMsgs = [
           { text: data.result, sender: "bot" },
-          { text: data.message, sender: "bot" },
-        ]);
+          ...(data.message ? [{ text: data.message, sender: "bot" }] : []),
+        ];
+
+        if (data.card) {
+          // dymek z kafelkiem (ResultCardBubble)
+          newMsgs.push({ sender: "bot", type: "result-card", card: data.card });
+          // ustaw także badge ryzyka na Results (jeśli backend podał label)
+          if (data.card.risk_label) {
+            setTextRisk(normalizeRisk(data.card.risk_label) || null);
+          }
+        }
+        if (data.card) setFinalCard(data.card);
+
+        setMessages((prev) => [...prev, ...newMsgs]);
         setIsExamComplete(true);
+        // setActiveTab("results");      // auto-przełącz na zakładkę wyników
       } else if (data.low_confidence) {
+        // zbyt mało odpowiedzi – pokaż ostrzeżenie z backendu
         setMessages((prev) => [...prev, { text: data.message, sender: "bot" }]);
       }
+
       setIsTyping(false);
       setEarlyFinishWarning(false);
     } catch (error) {
@@ -880,7 +958,7 @@ function riskClass(r) {
               <div className="risk-badge risk-moderate">Moderate OA likelihood</div>
               <p className="confidence">Confidence (heuristic): {(heurConfidence() * 100).toFixed(0)}%</p>
             </section> */}
-            <section className="card">
+            {/* <section className="card">
               <h3>Overall result</h3>
               {(() => {
                 const fallback = riskFromHeuristic(heurConfidence());
@@ -892,9 +970,9 @@ function riskClass(r) {
                 );
               })()}
               <p className="confidence">Confidence (heuristic): {(heurConfidence() * 100).toFixed(0)}%</p>
-            </section>
+            </section> */}
 
-            <section className="card">
+            <section className="card card-interview">
               <h3>Interview (text)</h3>
               <p>{isExamComplete ? "Assessment complete based on questionnaire." : "Not enough data for a reliable assessment."}</p>
               <ul className="bullets">
@@ -903,12 +981,30 @@ function riskClass(r) {
               </ul>
             </section>
 
-            <section className="card">
+            {finalCard && (
+              <section className="card card-model">
+                <h3>Model result</h3>
+                <div style={{ borderLeft: `6px solid ${finalCard.color||'#666'}`, paddingLeft: 10 }}>
+                  <div><b>{finalCard.grade_label}</b></div>
+                  {finalCard.grade_title && <div style={{ opacity: 0.8 }}>{finalCard.grade_title}</div>}
+                  {finalCard.womac?.percent != null && (
+                    <div>WOMAC: {Math.round(finalCard.womac.percent)}%</div>
+                  )}
+                  {Array.isArray(finalCard.tips) && finalCard.tips.length > 0 && (
+                    <ul className="bullets">
+                      {finalCard.tips.slice(0,3).map((t,i)=><li key={i}>{t}</li>)}
+                    </ul>
+                  )}
+                </div>
+              </section>
+            )}
+
+            <section className="card card-mri">
               <h3>MRI analysis</h3>
               <p>{result ? `Predicted: ${result}` : "No image analyzed yet."}</p>
             </section>
 
-            <section className="card">
+            <section className="card card-next">
               <h3>What you can do next</h3>
               <ol className="next-steps">
                 <li>Consult your GP or an orthopedist with these results.</li>
