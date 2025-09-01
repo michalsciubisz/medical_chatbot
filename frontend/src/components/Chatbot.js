@@ -290,6 +290,10 @@ function riskClass(r) {
     if (t.includes("summary") || t.startsWith("/summary")) return "SUMMARY";
     return null;
   }
+  const skipCurrentQuestion = async () => {
+    // wyślij 0 do backendu, ale pokaż "Skip" w czacie
+    await submitAnswer(0, "Skip");
+  };
 
   // input is always enabled
   const isInputDisabled = false;
@@ -690,11 +694,16 @@ function riskClass(r) {
       setInput("");
       return;
     }
-    if (intent === "SKIP" && currentQ) {
-      await submitAnswer("skip", "Skip");
+    // if (intent === "SKIP" && currentQ) {
+    //   await submitAnswer("skip", "Skip");
+    //   setInput("");
+    //   return;
+    // }
+     if (intent === "SKIP" && currentQ) {
+      await skipCurrentQuestion();
       setInput("");
       return;
-    }
+     }
     if (intent === "UNDO") {
       const lastUser = [...messages].reverse().find((m) => m.sender === "user");
       if (lastUser?.text) setInput(lastUser.text);
@@ -808,7 +817,8 @@ function riskClass(r) {
 
           {/* Smart suggestions (only the ones that add value) */}
           <div className="smart-suggestions" style={{ display: "flex", gap: 8, margin: "6px 0" }}>
-            <button onClick={() => setInput("skip")} className="smart-chip">Skip question</button>
+            {/* <button onClick={() => setInput("skip")} className="smart-chip">Skip question</button> */}
+            <button onClick={skipCurrentQuestion} className="smart-chip">Skip question</button>
             {imageModeActive ? (
               <button onClick={() => setInput("upload image")} className="smart-chip">Upload image</button>
             ) : (
