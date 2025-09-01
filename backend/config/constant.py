@@ -68,6 +68,12 @@ IMAGE_MAPPER = {
     2 : "severe"
 }
 
+IMAGE_TO_KL = {
+    "healthy/doubtful": "KL0",   # albo "KL1", jeśli chcesz ostrożniej
+    "moderate": "KL3",           # środek → umiarkowana zmiana
+    "severe": "KL4",             # najbardziej zaawansowana
+}
+
 MIN_ANSWERS = 10 
 
 QUESTIONS = {

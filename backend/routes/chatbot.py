@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
-from config.constant import QUESTIONS, IMAGE_MAPPER, MIN_ANSWERS
+from config.constant import QUESTIONS, IMAGE_MAPPER, MIN_ANSWERS, IMAGE_TO_KL
 from utils.womac import calculate_womac, build_result_card
-from utils.image_model import predict_image_classification, adjust_image
+from utils.image_model import predict_image_classification, adjust_image, build_image_result_card
 from utils.json_sanitize import _json_sanitize
 import uuid, numpy as np
 from utils.text_model import predict_class, MODEL_CLASSES
@@ -190,13 +190,138 @@ def respond():
             "message": "Thank you for completing the questionnaire."
         })
 
+# @chatbot_bp.route("/api/classify_image", methods=["POST"])
+# def classify_image():
+#     image = request.files["image"] # get image from request.files
+#     adjusted_image = adjust_image(image)
+#     prediction = predict_image_classification(adjusted_image)  # function to classify based on image
+#     predicted_class = np.argmax(prediction).item()  # because output is softmax
+#     return jsonify({"prediction": IMAGE_MAPPER[predicted_class]})
+
+# @chatbot_bp.route("/api/classify_image", methods=["POST"])
+# def classify_image():
+#     if "image" not in request.files:
+#         return jsonify({"error": "No image file provided under field 'image'."}), 400
+
+#     file = request.files["image"]
+
+#     try:
+#         adjusted_image = adjust_image(file)
+#         prediction = predict_image_classification(adjusted_image)  # shape (1, C)
+#         probs = prediction[0]
+        
+#         # sanity-check: liczba klas = długość IMAGE_MAPPER
+#         C = len(probs)
+#         if C != len(IMAGE_MAPPER):
+#             return jsonify({"error": f"Model returned {C} classes, but IMAGE_MAPPER has {len(IMAGE_MAPPER)}."}), 500
+
+#         pred_idx = int(np.argmax(probs))
+#         pred_label = IMAGE_MAPPER[pred_idx]                 # "moderate"
+#         pred_kl = IMAGE_TO_KL.get(pred_label)               # np. "KL3"
+#         confidence = float(probs[pred_idx])
+
+#         # top-N w KL
+#         top_n = min(3, C)
+#         top_indices = np.argsort(probs)[::-1][:top_n]
+#         top_list = []
+#         for i in top_indices:
+#             i = int(i)
+#             lbl = IMAGE_MAPPER[i]                           # "moderate"
+#             kl = IMAGE_TO_KL.get(lbl, "KL3")                # domyśl np. KL3
+#             top_list.append({"kl": kl, "prob": float(probs[i])})
+
+#         # słownik {KLx: p}
+#         probs_dict = {}
+#         for i in range(C):
+#             lbl = IMAGE_MAPPER[i]
+#             kl = IMAGE_TO_KL.get(lbl, None)
+#             if kl:
+#                 probs_dict[kl] = float(probs[i])
+
+#         # zbuduj kartę
+#         card = build_image_result_card(
+#             kl_code=pred_kl or "KL3",                       # fallback, gdyby mapping nie trafił
+#             confidence=confidence,
+#             probs=probs_dict
+#         )
+#         safe_card = _json_sanitize(card)
+
+#         return jsonify({
+#             "prediction": pred_kl or pred_label,            # zwróć KL jeśli jest, inaczej surową etykietę
+#             "confidence": confidence,
+#             "top": top_list,
+#             "card": safe_card,
+#             "message": "Image classification complete."
+#         })
+#     except Exception as e:
+#         # warto logować pełny traceback w serwerze; do klienta krótki komunikat
+#         return jsonify({"error": f"Image processing failed: {str(e)}"}), 500
+
 @chatbot_bp.route("/api/classify_image", methods=["POST"])
 def classify_image():
-    image = request.files["image"] # get image from request.files
-    adjusted_image = adjust_image(image)
-    prediction = predict_image_classification(adjusted_image)  # function to classify based on image
-    predicted_class = np.argmax(prediction).item()  # because output is softmax
-    return jsonify({"prediction": IMAGE_MAPPER[predicted_class]})
+    if "image" not in request.files:
+        return jsonify({"error": "No image file provided under field 'image'."}), 400
+
+    file = request.files["image"]
+    try:
+        adjusted = adjust_image(file)
+        pred = predict_image_classification(adjusted)   # (1, C)
+        probs = pred[0]
+        C = len(probs)
+
+        # sanity-check: czy rozmiar wyjścia pasuje do IMAGE_MAPPER?
+        if C != len(IMAGE_MAPPER):
+            return jsonify({
+                "error": f"Model returned {C} classes, but IMAGE_MAPPER has {len(IMAGE_MAPPER)}."
+            }), 500
+
+        # najlepsza klasa
+        pred_idx = int(np.argmax(probs))
+        raw_label = IMAGE_MAPPER[pred_idx]               # "moderate"
+        pred_kl = IMAGE_TO_KL.get(raw_label)             # "KL3"
+        confidence = float(probs[pred_idx])
+
+        # TOP-N
+        top_n = min(3, C)
+        top_indices = np.argsort(probs)[::-1][:top_n]
+        top_list = []
+        for i in top_indices:
+            i = int(i)
+            lbl = IMAGE_MAPPER[i]                        # "healthy/doubtful" | "moderate" | "severe"
+            kl = IMAGE_TO_KL.get(lbl, None)              # "KL1"/"KL3"/"KL4"
+            top_list.append({
+                "label": lbl,
+                "kl": kl or "N/A",
+                "prob": float(probs[i]),
+            })
+
+        # rozkład w KL (tylko te, które mamy mapowalne)
+        probs_dict = {}
+        for i in range(C):
+            lbl = IMAGE_MAPPER[i]
+            kl = IMAGE_TO_KL.get(lbl, None)
+            if kl:
+                probs_dict[kl] = float(probs[i])
+
+        # budowa karty
+        card = build_image_result_card(
+            kl_code=pred_kl or "KL3",
+            confidence=confidence,
+            probs=probs_dict
+        )
+        safe_card = _json_sanitize(card)
+
+        return jsonify({
+            # na potrzeby zgodności: zwracamy KL (spójne z tekstem)
+            "prediction": pred_kl or raw_label,
+            "confidence": confidence,
+            "top": top_list,
+            "card": safe_card,
+            "message": "Image classification complete."
+        })
+    except Exception as e:
+        # do logów serwera dorzuć traceback; klientowi krótki opis
+        return jsonify({"error": f"Image processing failed: {str(e)}"}), 500
 
 # @chatbot_bp.route("/api/early_finish", methods=["POST"])
 # def early_finish():

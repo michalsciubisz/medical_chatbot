@@ -19,8 +19,16 @@ function Chatbot() {
   const [askedCount, setAskedCount] = useState(0);
   const [useSlider, setUseSlider] = useState(false); // default OFF for a more "chatty" feel
   const [textRisk, setTextRisk] = useState(null); // 'low' | 'moderate' | 'high' | null
-  const [finalCard, setFinalCard] = useState(null);
+  const [finalCard, setFinalCard] = useState(null); // karta z wywiadu tekstowego
+  const [imageCard, setImageCard] = useState(null);   // karta z klasyfikacji obrazu
 
+  const resetResults = useCallback(() => {
+   setResult(null);
+   setFinalCard(null);
+   setImageCard(null);
+   setTextRisk(null);
+   setIsExamComplete(false);
+  }, []);
 
   const messagesEndRef = useRef(null);
 
@@ -54,9 +62,10 @@ function Chatbot() {
       }
     };
     init();
-  }, []);
+    resetResults(); // czyści stare wyniki, gdyby komponent montował się po poprzedniej sesji
 
-  // keyboard shortcuts 0–9 for scale when input isn’t focused
+  }, [resetResults]);
+
   useEffect(() => {
     const onKey = (e) => {
       if (!currentQ || currentQ.type !== "scale") return;
@@ -268,7 +277,6 @@ function riskClass(r) {
       return clamp(final + min, min, max);
     }
 
-    // 4) yes/no as binary scale (if question is likely binary)
     if (YES_WORDS.some(w => t.includes(w))) return clamp(min + (max > min ? 1 : 0), min, max);
     if (NO_WORDS.some(w => t.includes(w))) return clamp(min, min, max);
 
@@ -281,8 +289,6 @@ function riskClass(r) {
 
   function detectIntent(text) {
     const t = normalize(text);
-    // keep only intents that don't duplicate top UI:
-    // - We REMOVE finish/help here (buttons exist at the top)
     if (t.startsWith("/restart") || t.includes("restart")) return "RESTART";
     if (t.includes("image mode") || t.includes("mri mode") || t.startsWith("/image")) return "IMAGE_MODE";
     if (t.includes("upload image") || t.includes("send image")) return "UPLOAD_IMAGE";
@@ -292,14 +298,11 @@ function riskClass(r) {
     return null;
   }
   const skipCurrentQuestion = async () => {
-    // wyślij 0 do backendu, ale pokaż "Skip" w czacie
     await submitAnswer(0, "Skip");
   };
 
-  // input is always enabled
   const isInputDisabled = false;
 
-  // --- Question components ---
   const ScaleQuestion = ({ m }) => {
     const labels = m.meta?.labels || ["0", "1", "2", "3", "4"];
     const min = m.meta?.min ?? 0;
@@ -446,15 +449,6 @@ function riskClass(r) {
     );
   };
 
-  // const renderQuestion = (m) => {
-  //   if (m.sender === "bot" && m.question) {
-  //     if (m.type === "scale") return <ScaleQuestion m={m} />;
-  //     if (m.type === "choice") return <ChoiceQuestion m={m} />;
-  //     return <FreeTextQuestion m={m} />;
-  //   }
-  //   return <p>{m.text}</p>;
-  // };
-
   const renderQuestion = (m) => {
     if (m.type === "result-card" && m.card) {
       return <ResultCardBubble card={m.card} />;
@@ -467,7 +461,6 @@ function riskClass(r) {
     return <p>{m.text}</p>;
   };
 
-  // --- send answer ---
   const submitAnswer = async (valueOverride, userEchoText) => {
     if (!sessionId) return;
 
@@ -477,7 +470,6 @@ function riskClass(r) {
     };
     if (!payload.answer) return;
 
-    // optimistic echo
     if (valueOverride === undefined) {
       setMessages((prev) => [...prev, { text: payload.answer, sender: "user" }]);
       setInput("");
@@ -510,12 +502,6 @@ function riskClass(r) {
         });
       }
 
-      // if (data.result) {
-      //   setMessages((prev) => [...prev, { text: data.result, sender: "bot" }]);
-      //   setIsExamComplete(true);
-      //   setIsTyping(false);
-      //   return;
-      // }
       if (data.result) {
         const newMsgs = [{ text: data.result, sender: "bot" }];
         if (data.message) {
@@ -527,15 +513,11 @@ function riskClass(r) {
         if (data.card) setFinalCard(data.card);
         setMessages((prev) => [...prev, ...newMsgs]);
 
-        // jeśli backend poda “card”, zaktualizuj też “Results” tab i ryzyko
         if (data.card?.risk_label) {
           setTextRisk(normalizeRisk(data.card.risk_label) || null);
         }
         setIsExamComplete(true);
         setIsTyping(false);
-
-        // opcjonalnie automatycznie pokaż zakładkę "Results"
-        // setActiveTab("results");
         return;
       }
 
@@ -605,9 +587,8 @@ function riskClass(r) {
           sender: "bot",
         },
       ]);
-      setResult(null);
+      resetResults();        
       setImage(null);
-      setIsExamComplete(false);
       setEarlyFinishWarning(false);
       setImageModeActive(false);
       setValidationByQ({});
@@ -627,7 +608,6 @@ function riskClass(r) {
       });
       const data = res.data;
 
-      // 1) ryzyko (z pola text_risk albo z result-stringa)
       if (data.text_risk) {
         setTextRisk(normalizeRisk(data.text_risk) || null);
       } else if (data.result && typeof data.result === "string") {
@@ -635,7 +615,6 @@ function riskClass(r) {
         if (inferred) setTextRisk(inferred);
       }
 
-      // 2) jeśli mamy wynik – pokaż result, message i ew. card w czacie
       if (data.result) {
         const newMsgs = [
           { text: data.result, sender: "bot" },
@@ -643,9 +622,7 @@ function riskClass(r) {
         ];
 
         if (data.card) {
-          // dymek z kafelkiem (ResultCardBubble)
           newMsgs.push({ sender: "bot", type: "result-card", card: data.card });
-          // ustaw także badge ryzyka na Results (jeśli backend podał label)
           if (data.card.risk_label) {
             setTextRisk(normalizeRisk(data.card.risk_label) || null);
           }
@@ -654,9 +631,7 @@ function riskClass(r) {
 
         setMessages((prev) => [...prev, ...newMsgs]);
         setIsExamComplete(true);
-        // setActiveTab("results");      // auto-przełącz na zakładkę wyników
       } else if (data.low_confidence) {
-        // zbyt mało odpowiedzi – pokaż ostrzeżenie z backendu
         setMessages((prev) => [...prev, { text: data.message, sender: "bot" }]);
       }
 
@@ -711,14 +686,30 @@ function riskClass(r) {
         formData,
         { headers: { "Content-Type": "multipart/form-data" } }
       );
-      setResult(response.data.prediction);
-      setMessages((prev) => [
-        ...prev,
-        {
-          text: `Based on MRI imaging you are likely to have: ${response.data.prediction}.`,
+      const { prediction, confidence, top, card, message } = response.data || {};
+      setResult(prediction);
+
+      const newMsgs = [];
+      if (prediction) {
+        newMsgs.push({
+          text: `Based on MRI imaging you are likely to have: ${prediction}.`,
           sender: "bot",
-        },
-      ]);
+        });
+      }
+      if (message) {
+        newMsgs.push({ text: message, sender: "bot" });
+      }
+      if (card) {
+        // bąbelek z kafelkiem (ten sam komponent co w tekście)
+        newMsgs.push({ sender: "bot", type: "result-card", card });
+        setImageCard(card);                                  // do zakładki Results (MRI)
+        if (card.risk_label) {
+          setTextRisk(normalizeRisk(card.risk_label) || null);
+        }
+      }
+      if (newMsgs.length > 0) {
+        setMessages((prev) => [...prev, ...newMsgs]);
+      }
       setIsTyping(false);
     } catch (error) {
       setIsTyping(false);
@@ -733,7 +724,7 @@ function riskClass(r) {
     const text = [
       "Summary of results:",
       `- Based on text interview: ${isExamComplete ? "assessment complete" : "incomplete"}`,
-      `- Based on MRI imaging: ${result || "No image analyzed yet"}`,
+      `- Based on MRI imaging: ${imageCard?.grade_label || result || "No image analyzed yet"}`,
       `- Heuristic confidence: ${(heurConfidence() * 100).toFixed(0)}%`,
       "",
       "Next steps:",
@@ -772,11 +763,6 @@ function riskClass(r) {
       setInput("");
       return;
     }
-    // if (intent === "SKIP" && currentQ) {
-    //   await submitAnswer("skip", "Skip");
-    //   setInput("");
-    //   return;
-    // }
      if (intent === "SKIP" && currentQ) {
       await skipCurrentQuestion();
       setInput("");
@@ -893,9 +879,7 @@ function riskClass(r) {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Smart suggestions (only the ones that add value) */}
           <div className="smart-suggestions" style={{ display: "flex", gap: 8, margin: "6px 0" }}>
-            {/* <button onClick={() => setInput("skip")} className="smart-chip">Skip question</button> */}
             <button onClick={skipCurrentQuestion} className="smart-chip">Skip question</button>
             {imageModeActive ? (
               <button onClick={() => setInput("upload image")} className="smart-chip">Upload image</button>
@@ -953,25 +937,6 @@ function riskClass(r) {
         <div className="results-section">
           <h2>Summary of results</h2>
           <div className="results-grid">
-            {/* <section className="card">
-              <h3>Overall result</h3>
-              <div className="risk-badge risk-moderate">Moderate OA likelihood</div>
-              <p className="confidence">Confidence (heuristic): {(heurConfidence() * 100).toFixed(0)}%</p>
-            </section> */}
-            {/* <section className="card">
-              <h3>Overall result</h3>
-              {(() => {
-                const fallback = riskFromHeuristic(heurConfidence());
-                const r = textRisk || fallback;
-                return (
-                  <div className={riskClass(r)}>
-                    {riskLabel(r)}
-                  </div>
-                );
-              })()}
-              <p className="confidence">Confidence (heuristic): {(heurConfidence() * 100).toFixed(0)}%</p>
-            </section> */}
-
             <section className="card card-interview">
               <h3>Interview (text)</h3>
               <p>{isExamComplete ? "Assessment complete based on questionnaire." : "Not enough data for a reliable assessment."}</p>
@@ -1001,7 +966,33 @@ function riskClass(r) {
 
             <section className="card card-mri">
               <h3>MRI analysis</h3>
-              <p>{result ? `Predicted: ${result}` : "No image analyzed yet."}</p>
+              {!imageCard && (
+                <p>{result ? `Predicted: ${result}` : "No image analyzed yet."}</p>
+              )}
+              {imageCard && (
+                <>
+                  <ResultCardBubble card={imageCard} />
+                  {typeof imageCard.confidence === "number" && (
+                    <p style={{ marginTop: 8 }}>
+                      Confidence: <b>{Math.round(imageCard.confidence * 100)}%</b>
+                    </p>
+                  )}
+                  {imageCard.class_probabilities && (
+                    <details style={{ marginTop: 6 }}>
+                      <summary>Class probabilities</summary>
+                      <ul className="bullets" style={{ marginTop: 6 }}>
+                        {Object.entries(imageCard.class_probabilities)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([k, v]) => (
+                            <li key={k}>
+                              {k}: {Math.round(v * 100)}%
+                            </li>
+                          ))}
+                      </ul>
+                    </details>
+                  )}
+                </>
+              )}
             </section>
 
             <section className="card card-next">
