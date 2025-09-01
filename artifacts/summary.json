@@ -1,0 +1,20 @@
+{
+  "best_model": "Gradient Boosting",
+  "scores": {
+    "holdout_accuracy": 0.9701492537313433,
+    "holdout_bal_acc": 0.8800000000000001,
+    "holdout_f1_macro": 0.910512129380054,
+    "cv_acc_mean": 0.968056105610561,
+    "cv_acc_std": 0.01469609540981232,
+    "cv_balacc_mean": 0.896957264957265,
+    "cv_balacc_std": 0.04630950642125908,
+    "cv_f1_macro_mean": 0.9125060591576101,
+    "cv_f1_macro_std": 0.04851376519611454
+  },
+  "paths": {
+    "results_scores": "artifacts/results_scores.csv",
+    "best_model_joblib": ".\\artifacts\\best_model.joblib",
+    "confusion_matrices_dir": "artifacts/conf_matrices",
+    "feature_columns": "artifacts/feature_columns.json"
+  }
+}
